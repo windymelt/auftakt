@@ -6,6 +6,7 @@ lazy val root = project
     name         := "doobie exercise",
     version      := "0.1.0-SNAPSHOT",
     scalaVersion := scala3Version,
+    fork         := true,
     libraryDependencies ++= Seq(
       // Start with this one
       "org.tpolecat" %% "doobie-core"     % "1.0.0-RC4",
