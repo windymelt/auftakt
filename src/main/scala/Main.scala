@@ -85,6 +85,7 @@ object Main extends IOApp.Simple {
 
     // Load grabbed rows
     // TODO: Do HTTP POST. Retry. blocking operation. Hard retry(requeueing).
+    // TODO: Throttle strategy each target.
     val dispatch: QueueRow => IO[QueueRow] = (r: QueueRow) =>
       scribe.cats[IO].info(s"dispatching ${r.id}") >> IO.pure(r)
 
@@ -131,7 +132,7 @@ object Main extends IOApp.Simple {
       // fetch some row, verify all prerequisite nodes are finished, mark as claimed
       scribe.cats[IO].info("finding available node...") >>
         waitingRows
-          .evalTap(r => IO.println(r))
+          .evalTap(r => scribe.cats[IO].debug(r.toString))
           .evalFilter(satisfiesRunAfter)
           .evalFilter(r =>
             isAllFinished(r.dagId)(r.prerequisiteNodeIds.toSet),
@@ -145,7 +146,7 @@ object Main extends IOApp.Simple {
       _ <- markVacantQueueAsGrabbed
       _ <- loadQueue
         .evalTap { row =>
-          IO.println(row)
+          scribe.cats[IO].debug(row.toString)
         }
         .parEvalMapUnordered(4)(
           (Kleisli(dispatch) >>> Kleisli(mark(QueueStatus.finished))).run,
