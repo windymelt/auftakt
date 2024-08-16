@@ -5,6 +5,7 @@ services:
       POSTGRES_DB: mydb
       POSTGRES_USER: myuser
       POSTGRES_PASSWORD: mypassword
+      TZ: "Asia/Tokyo"
     ports:
       - "5432:5432"
     volumes:
