@@ -56,7 +56,7 @@ case class QueueRow(
 object Main extends IOApp.Simple {
   val grabberId = GrabberId(42)
 
-  def loadQueue(using xa: Transactor[IO]): fs2.Stream[IO, QueueRow] =
+  def grabbedRows(using xa: Transactor[IO]): fs2.Stream[IO, QueueRow] =
     sql"SELECT id, dag_id, node_id, grabber_id, prerequisite_node_ids, created_at, target_url, payload, status, run_after FROM queue WHERE status = ${QueueStatus.grabbed} LIMIT 100"
       .query[QueueRow]
       .stream
@@ -144,7 +144,7 @@ object Main extends IOApp.Simple {
     val polling = for {
       _ <- scribe.cats[IO].info("loading queue")
       _ <- markVacantQueueAsGrabbed
-      _ <- loadQueue
+      _ <- grabbedRows
         .evalTap { row =>
           scribe.cats[IO].debug(row.toString)
         }
