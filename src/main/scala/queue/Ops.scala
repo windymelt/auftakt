@@ -42,7 +42,7 @@ object Ops {
       xa: Transactor[IO],
   ): Option[DagId] => Set[NodeId] => IO[Boolean] = dagId =>
     ns =>
-      scribe.cats[IO].info("checking finish") >> (NonEmptyList.fromList(
+      scribe.cats[IO].debug("checking finish") >> (NonEmptyList.fromList(
         ns.toList,
       ) match {
         case None => IO.pure(true)
