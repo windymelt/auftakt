@@ -87,6 +87,7 @@ object Main extends IOApp.Simple {
       // TODO: attempt to retry to connect to DB when connection failed
       // TODO: halt when any of subsystem is down
       // TODO: configurable instance key
+      // TODO: resurrect (reset grabber and mark as waiting) stale (grabbed but not processed for long time) queue
       instanceKey <- IO.pure(
         "auftakt-instance-0",
       ) // share this key among active and stand-by
