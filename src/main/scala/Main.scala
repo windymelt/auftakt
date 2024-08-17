@@ -48,9 +48,12 @@ object Main extends IOApp.Simple {
       IO(OffsetDateTime.now()).map(_.compareTo(r.runAfter) > 0)
 
     def markAvailableQueueAsClaimed(using xa: Transactor[IO]): IO[Unit] =
+      import scribe.*
       // fetch some row, verify all prerequisite nodes are finished, mark as claimed
-      scribe.cats[IO].info("finding available node...") >>
-        waitingRows
+      val logger = scribe.cats[IO]
+      for {
+        _ <- logger.info("finding available node...")
+        nClaimed <- waitingRows
           .evalTap(r => scribe.cats[IO].debug(r.toString))
           .evalFilter(satisfiesRunAfter)
           .evalFilterAsync[IO](4)(r => // TODO: configurable check concurrency
@@ -58,7 +61,13 @@ object Main extends IOApp.Simple {
           )
           .evalMap(mark(QueueStatus.claimed))
           .compile
-          .drain
+          .count
+        _ <- nClaimed match {
+          case 0L => IO.unit
+          case _ =>
+            logger.info("Marked rows as claimed", data("count", nClaimed))
+        }
+      } yield ()
 
     def polling(using xa: Transactor[IO]) = for {
       _ <- scribe.cats[IO].info("loading queue")
