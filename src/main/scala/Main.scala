@@ -1,9 +1,13 @@
+package dev.capslock.auftakt
+
 import cats.*
 import cats.data.Kleisli
 import cats.data.NonEmptyList
 import cats.effect.{*, given}
 import cats.implicits.{*, given}
+import com.zaxxer.hikari.HikariConfig
 import doobie.*
+import doobie.hikari._
 import doobie.implicits.{*, given}
 import doobie.postgres.implicits.*
 import doobie.util.ExecutionContexts
@@ -69,17 +73,23 @@ object Main extends IOApp.Simple {
       .transact(xa)
 
   def run: IO[Unit] = {
-    given xa: Transactor[IO] = Transactor.fromDriverManager[IO](
-      driver = "org.postgresql.Driver", // driver classname
-      url =
-        "jdbc:postgresql://localhost:5432/mydb", // connect URL (driver-specific)
-      user = "myuser",         // user
-      password = "mypassword", // password
-      logHandler = None,       // Some(LogHandler.jdkLogHandler[IO]),
-    )
+    val xaPool: Resource[IO, HikariTransactor[IO]] = for {
+      hikariConfig <- Resource.pure {
+        val conf = new HikariConfig()
+        conf.setDriverClassName("org.postgresql.Driver")
+        conf.setJdbcUrl("jdbc:postgresql://localhost:5432/mydb")
+        conf.setUsername("myuser")
+        conf.setPassword("mypassword")
+        conf
+      }
+      xa <- HikariTransactor.fromHikariConfig(
+        hikariConfig,
+        Some(ScribeLogHandler()),
+      )
+    } yield xa
 
     // This query is atomic; so other grabbers won't grab the same row.
-    val markVacantQueueAsGrabbed: IO[Int] =
+    def markVacantQueueAsGrabbed(using xa: Transactor[IO]): IO[Int] =
       sql"UPDATE queue SET status = ${QueueStatus.grabbed}, grabber_id = ${grabberId} WHERE status = ${QueueStatus.claimed}".update.run
         .transact(xa)
 
@@ -89,18 +99,22 @@ object Main extends IOApp.Simple {
     val dispatch: QueueRow => IO[QueueRow] = (r: QueueRow) =>
       scribe.cats[IO].info(s"dispatching ${r.id}") >> IO.pure(r)
 
-    val mark: QueueStatus => QueueRow => IO[Int] = s =>
-      r =>
-        sql"UPDATE queue SET status = ${s} WHERE id = ${r.id}".update.run
-          .transact(xa)
+    def mark(using xa: Transactor[IO]): QueueStatus => QueueRow => IO[Int] =
+      s =>
+        r =>
+          sql"UPDATE queue SET status = ${s} WHERE id = ${r.id}".update.run
+            .transact(xa)
 
-    val removeFromQueue: QueueRow => IO[Int] = (r: QueueRow) =>
-      sql"DELETE FROM queue WHERE id = ${r.id}".update.run.transact(xa)
+    def removeFromQueue(using xa: Transactor[IO]): QueueRow => IO[Int] =
+      (r: QueueRow) =>
+        sql"DELETE FROM queue WHERE id = ${r.id}".update.run.transact(xa)
 
     val satisfiesRunAfter: QueueRow => IO[Boolean] = r =>
       IO(OffsetDateTime.now()).map(_.compareTo(r.runAfter) > 0)
 
-    val isAllFinished: Option[DagId] => Set[NodeId] => IO[Boolean] = dagId =>
+    def isAllFinished(using
+        xa: Transactor[IO],
+    ): Option[DagId] => Set[NodeId] => IO[Boolean] = dagId =>
       ns =>
         scribe.cats[IO].info("checking finish") >> (NonEmptyList.fromList(
           ns.toList,
@@ -128,20 +142,20 @@ object Main extends IOApp.Simple {
             }
         }).debug("isAllFinished")
 
-    val markAvailableQueueAsClaimed: IO[Unit] =
+    def markAvailableQueueAsClaimed(using xa: Transactor[IO]): IO[Unit] =
       // fetch some row, verify all prerequisite nodes are finished, mark as claimed
       scribe.cats[IO].info("finding available node...") >>
         waitingRows
           .evalTap(r => scribe.cats[IO].debug(r.toString))
           .evalFilter(satisfiesRunAfter)
-          .evalFilter(r =>
+          .evalFilterAsync[IO](4)(r => // TODO: configurable check concurrency
             isAllFinished(r.dagId)(r.prerequisiteNodeIds.toSet),
-          ) // TODO: async
+          )
           .evalMap(mark(QueueStatus.claimed))
           .compile
           .drain
 
-    val polling = for {
+    def polling(using xa: Transactor[IO]) = for {
       _ <- scribe.cats[IO].info("loading queue")
       _ <- markVacantQueueAsGrabbed
       _ <- grabbedRows
@@ -158,13 +172,25 @@ object Main extends IOApp.Simple {
     for {
       // TODO: attempt to retry to connect to DB when connection failed
       // TODO: halt when any of subsystem is down
-      _ <- scribe.cats[IO].info("starting scheduler...")
-      _ <- markAvailableQueueAsClaimed
-        .andWait(FiniteDuration(5, "second"))
-        .foreverM
-        .start
-      // poll every 1 second
-      _ <- polling.andWait(FiniteDuration(1, "second")).foreverM
+      // TODO: configurable instance key
+      instanceKey <- IO.pure(
+        "auftakt-instance-0",
+      ) // share this key among active and stand-by
+      _ <- xaPool.use { implicit xa =>
+        for {
+          _ <- dbLockResource(instanceKey)(xa).surround {
+            for {
+              _ <- scribe.cats[IO].info("starting scheduler...")
+              _ <- markAvailableQueueAsClaimed
+                .andWait(FiniteDuration(5, "second"))
+                .foreverM
+                .start
+              // poll every 1 second
+              _ <- polling.andWait(FiniteDuration(1, "second")).foreverM
+            } yield ()
+          }
+        } yield ()
+      }
     } yield ()
   }
 }
