@@ -93,7 +93,7 @@ object Main extends IOApp.Simple {
       ) // share this key among active and stand-by
       _ <- xaPool.use { implicit xa =>
         for {
-          _ <- dbLockResource(instanceKey)(xa).surround {
+          _ <- LockedEffect.distributedImpl[IO].lock(instanceKey) {
             for {
               _ <- scribe.cats[IO].info("starting scheduler...")
               _ <- markAvailableQueueAsClaimed
