@@ -15,6 +15,7 @@ lazy val root = project
       "-Ywith-best-effort-tasty",
     ),
     fork := true,
+    usePipelining := true,
     libraryDependencies ++= Seq(
       // Start with this one
       "org.tpolecat" %% "doobie-core"     % "1.0.0-RC4",
