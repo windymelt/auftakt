@@ -1,5 +1,7 @@
 val scala3Version = "3.5.0"
 val scribeVersion = "3.15.0"
+val sttpVersion = "3.9.8"
+val http4sVersion = "0.23.27"
 
 ThisBuild / usePipelining := true
 
@@ -23,6 +25,9 @@ lazy val root = project
       "org.tpolecat" %% "doobie-postgres" % "1.0.0-RC4",
       "com.outr"     %% "scribe"          % scribeVersion,
       "com.outr"     %% "scribe-cats"     % scribeVersion,
+      "com.softwaremill.sttp.client3" %% "core" % sttpVersion,
+      "com.softwaremill.sttp.client3" %% "http4s-backend" % sttpVersion,
+      "org.http4s" %% "http4s-ember-client" % http4sVersion,
     ),
     libraryDependencies += "org.scalameta" %% "munit" % "1.0.0" % Test,
   )

@@ -10,3 +10,9 @@ services:
       - "5432:5432"
     volumes:
       - .:/app
+  dummy-server:
+    build: dummy-server/
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./dummy-server/data:/data

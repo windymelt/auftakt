@@ -38,11 +38,16 @@ object Main extends IOApp.Simple {
       )
     } yield xa
 
-    // Load grabbed rows
-    // TODO: Do HTTP POST. Retry. blocking operation. Hard retry(requeueing).
+    // POSTs specified url.
+    // TODO: Retry. blocking operation. Hard retry(requeueing).
     // TODO: Throttle strategy each target.
     val dispatch: QueueRow => IO[QueueRow] = (r: QueueRow) =>
-      scribe.cats[IO].info(s"dispatching ${r.id}") >> IO.pure(r)
+      scribe.cats[IO].info(s"dispatching ${r.id}") >> request.request(
+        sttp.model.Uri.unsafeParse(
+          r.targetUrl,
+        ), // TODO: mark as failed if parse failed
+        r.payload,
+      ) >> IO.pure(r) // TODO: save error message if failed (into some table)
 
     val satisfiesRunAfter: QueueRow => IO[Boolean] = r =>
       IO(OffsetDateTime.now()).map(_.compareTo(r.runAfter) > 0)
