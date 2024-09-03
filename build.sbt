@@ -28,6 +28,8 @@ lazy val root = project
       "com.softwaremill.sttp.client3" %% "core" % sttpVersion,
       "com.softwaremill.sttp.client3" %% "http4s-backend" % sttpVersion,
       "org.http4s" %% "http4s-ember-client" % http4sVersion,
+      "dev.kovstas" %% "fs2-throttler" % "1.0.12",
+      "com.github.cb372" %% "cats-retry" % "3.1.3",
     ),
     libraryDependencies += "org.scalameta" %% "munit" % "1.0.0" % Test,
   )

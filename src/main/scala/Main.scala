@@ -80,26 +80,41 @@ object Main extends IOApp.Simple {
         }
       } yield ()
 
+    val defaultTarget = Target(
+      0L,
+      TargetConfig(
+        name = "default",
+        concurrencyLimit = Some(4),
+        bufferingQueueLength = Some(10),
+        deadLetterQueueLength = Some(100),
+        throttlingStrategy =
+          ThrottlingStrategy.TokenBucket(3, FiniteDuration(1, "second")),
+        retryStrategy = RetryStrategy.NoRetry,
+      ),
+    )
+
+    def executeQueue(row: QueueRow)(using xa: Transactor[IO]) = for {
+      resp <- dispatch(row)
+      _ <- IO
+        .pure(resp.isSuccess)
+        .ifM(
+          mark(QueueStatus.finished)(row),
+          scribe.cats[IO].warn("Job finished not successfully") >> mark(
+            QueueStatus.finished, // TODO: mark as error
+          )(row),
+        )
+    } yield ()
+
     def polling(using xa: Transactor[IO]) = for {
       _ <- scribe.cats[IO].info("loading queue")
       _ <- markVacantQueueAsGrabbed(grabberId)
       _ <- grabbedRows(grabberId)
         .evalTap { row =>
           scribe.cats[IO].debug(row.toString)
-        }
-        .parEvalMapUnordered(4) { row =>
-          for {
-            resp <- dispatch(row)
-            _ <- IO
-              .pure(resp.isSuccess)
-              .ifM(
-                mark(QueueStatus.finished)(row),
-                scribe.cats[IO].warn("Job finished not successfully") >> mark(
-                  QueueStatus.finished, // TODO: mark as error
-                )(row),
-              )
-          } yield ()
-        }
+        } // we don't need to mark row as processing: until all grabbed rows are processed, no further process are executed
+        .through(
+          defaultTarget.intake(executeQueue),
+        ) // TODO: dispatch to dynamically specified target
         .compile
         .drain
     } yield ()
