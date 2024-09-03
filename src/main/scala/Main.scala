@@ -12,6 +12,7 @@ import doobie.implicits.{*, given}
 import doobie.postgres.implicits.*
 import doobie.util.ExecutionContexts
 import doobie.util.transactor.Transactor
+import sttp.client3.Response
 
 import java.time.OffsetDateTime
 import scala.concurrent.duration.FiniteDuration
@@ -41,13 +42,18 @@ object Main extends IOApp.Simple {
     // POSTs specified url.
     // TODO: Retry. blocking operation. Hard retry(requeueing).
     // TODO: Throttle strategy each target.
-    val dispatch: QueueRow => IO[QueueRow] = (r: QueueRow) =>
-      scribe.cats[IO].info(s"dispatching ${r.id}") >> request.request(
-        sttp.model.Uri.unsafeParse(
-          r.targetUrl,
-        ), // TODO: mark as failed if parse failed
-        r.payload,
-      ) >> IO.pure(r) // TODO: save error message if failed (into some table)
+    val dispatch: QueueRow => IO[Response[Either[String, String]]] =
+      (r: QueueRow) =>
+        for {
+          _ <- scribe.cats[IO].info(s"dispatching ${r.id}")
+          resp <- request.request(
+            sttp.model.Uri.unsafeParse(
+              r.targetUrl,
+            ), // TODO: mark as failed if parse failed
+            r.payload,
+          )
+          // TODO: save error message if failed (into some table)
+        } yield resp
 
     val satisfiesRunAfter: QueueRow => IO[Boolean] = r =>
       IO(OffsetDateTime.now()).map(_.compareTo(r.runAfter) > 0)
@@ -81,9 +87,19 @@ object Main extends IOApp.Simple {
         .evalTap { row =>
           scribe.cats[IO].debug(row.toString)
         }
-        .parEvalMapUnordered(4)(
-          (Kleisli(dispatch) >>> Kleisli(mark(QueueStatus.finished))).run,
-        )
+        .parEvalMapUnordered(4) { row =>
+          for {
+            resp <- dispatch(row)
+            _ <- IO
+              .pure(resp.isSuccess)
+              .ifM(
+                mark(QueueStatus.finished)(row),
+                scribe.cats[IO].warn("Job finished not successfully") >> mark(
+                  QueueStatus.finished, // TODO: mark as error
+                )(row),
+              )
+          } yield ()
+        }
         .compile
         .drain
     } yield ()
